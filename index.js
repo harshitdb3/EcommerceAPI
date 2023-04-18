@@ -320,6 +320,13 @@ async function getCheckoutPrice(UserId,callback)
             productQuantiymap.set(productsincart[i].productid, {price: product.price, quantity: productsincart[i].quantity});
         }
 
+        //Delete all products from the cart
+
+        await client.query('DELETE FROM usercart WHERE UserId = $1', [UserId], (err, res) =>
+        {
+            if (err) throw err;
+        });
+
         var totalprice = 0;
 
         productQuantiymap.forEach((value, key) =>
