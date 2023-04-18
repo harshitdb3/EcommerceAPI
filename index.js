@@ -1,10 +1,57 @@
 const express =  require('express');
 const session = require('express-session')
-const User = require('./models/User');
-const Cart = require('./models/Cart');
-const Product = require('./models/Product');
+// const User = require('./models/User');
+// const Cart = require('./models/Cart');
+// const Product = require('./models/Product');
 const bcrypt = require('bcrypt');
 const { v4: uuidv4 } = require('uuid');
+require('dotenv').config();
+const { PGUSER, PGPASSWORD } = process.env;
+
+//Conenct to the database
+const {Client} = require('pg');
+
+
+const client = new Client({
+    host: 'localhost',
+    port: 5432,
+    user: PGUSER,
+    password: PGPASSWORD,
+    database: 'postgres'
+  });
+
+// database connection and table creation
+client.connect((err) => {
+    if (err) {
+      console.error('connection error', err.stack);
+    } else {
+      console.log('connected');
+
+    //Check if users table exists if not create it
+    client.query('CREATE TABLE IF NOT EXISTS users (name VARCHAR(100), email VARCHAR(100) PRIMARY KEY, password VARCHAR(100), isAdmin BOOLEAN, UserId VARCHAR(100) ,address VARCHAR(100))', (err, res) => 
+    {
+        if (err) throw err;
+        console.log(res);
+    });
+
+    //Check if products table exists if not create it
+    client.query('CREATE TABLE IF NOT EXISTS products (name VARCHAR(50),description VARCHAR(100), price INTEGER, productId VARCHAR(50) PRIMARY KEY, quantity INTEGER)', (err, res) =>
+    {
+        if (err) throw err;
+        console.log(res);
+    });
+
+    //Check if usercart table exists if not create it
+    client.query('CREATE TABLE IF NOT EXISTS usercart (UserId VARCHAR(50), productId VARCHAR(50), quantity INTEGER)', (err, res) =>
+    {
+        if (err) throw err;
+        console.log(res);
+    });
+
+
+    }
+  });
+  
 
 // salt rounds for bcrypt us used to generate a salt for hashing the password
 // which is then stored in the database instead of the plain text password
@@ -30,9 +77,9 @@ const port= 3000;
 
 //Inmemory database for users and products
 
-const Users = []
+// const Users = []
 
-const Products = []
+// const Products = []
 
 
 
@@ -43,46 +90,64 @@ app.get('/',(req,res) =>
 });
 
 
-app.post('/signup',(req,res)=>
+app.post('/signup',(req,responce)=>
 {
-    const name = req.body.name;
-    const email = req.body.email;
+    const name = req.body.name.slice(0, 50);
+    const email = req.body.email.slice(0, 50);
     const isAdmin = req.body.isAdmin;
 
-    if(Users.find(user => user.email === email))
-    {
-        res.status(400).send("Email already in use");
-        return;
-    }
 
     const hashedPassword = bcrypt.hashSync(req.body.password, salt);
-    const UserId = uuidv4();
-    const user = new User(name,UserId,email,hashedPassword,isAdmin);
+    const UserId = uuidv4().slice(0, 50);
 
-    Users.push(user);
+    console.log(hashedPassword.length);
 
-    res.send(`Account created with user data: name=${name}, email=${email} please sign in to continue`);
+    client.query('INSERT INTO users (name, email, password, isAdmin, UserId) VALUES ($1, $2, $3, $4, $5)', [name, email, hashedPassword, isAdmin, UserId], (err, res) =>
+    {
+        if (err) throw err;
+        console.log(res);
+        if(res.rowCount > 0)
+        {
+            responce.send("User created successfully");
+        }
+        else
+        {
+            responce.status(400).send("User creation failed email already exists");
+        }
+    });
+
 
 });
 
-app.post('/signin',(req,res)=>
+app.post('/signin',(req,resp)=>
 {
 
     const email = req.body.email;
-    const hashedPassword = bcrypt.hashSync(req.body.password, salt);
-    const user = Users.find(user => user.email === email && user.hashedPassword === hashedPassword);
-
-    if(!user)
+    
+    //Check if the user exists in the database
+    client.query('SELECT * FROM users WHERE email = $1', [email], (err, res) =>
     {
-        res.status(401).send("Wrong email or password");
-        return;
-    }
+        if (err) throw err;
+        console.log(res);
+        if(res.rows.length > 0)
+        {
+            if(!bcrypt.compareSync(req.body.password, res.rows[0].password))
+            {
+                resp.status(401).send("Wrong email or password");
+                return;
+            }
+            
+            //Create a session for the user and store the userId in the session object for future use in other routes 
+            // This is auto destroyed when the user signs out or the session expires which is set to 5 minutes in this case
+            req.session.UserId = res.rows[0].userid;
 
-    //Create a session for the user and store the userId in the session object for future use in other routes 
-    // This is auto destroyed when the user signs out or the session expires which is set to 5 minutes in this case
-    req.session.UserId = user.UserId;
-
-    res.send(`Login success for user ${user.name} , ${req.session.UserId}`);
+            resp.send(`Login success , ${req.session.UserId}`);
+        }
+        else
+        {
+            resp.status(401).send("No email found");
+        }
+    });
 
 });
 
@@ -94,9 +159,22 @@ app.post('/signout',(req,res)=>
     res.send('Sign out success');
 });
 
-app.get('/products',(req,res)=>
+app.get('/products',(req,resp)=>
 {
-    res.send(Products);
+    //Get all products from the database
+    client.query('SELECT * FROM products', (err, res) =>
+    {
+        if (err) throw err;
+        console.log(res);
+        if(res.rows.length > 0)
+        {
+            resp.send(res.rows);
+        }
+        else
+        {
+            resp.send("No products available");
+        }
+    });
 
 });
 
@@ -109,34 +187,45 @@ app.post('/addAddress',isAdmin,(req,res)=>
         res.send("User not loged in");
     }
 
-    const user = Users.find(user => user.UserId === UserId);
-
-    if(user == null)
+    client.query('UPDATE users SET address = $1 WHERE UserId = $2', [req.body.address, UserId], (err, res) =>
     {
-        res.status(404).send("User not found");
-        return;
-    }
+        if (err) throw err;
+        console.log(res);
+        if(res.rowCount > 0)
+        {
+            res.send("Address added successfully");
+        }
+    });
 
-    user.addAddress(req.body.address);
-
-    res.send("Address added");
+    
 
 });
 
 
-app.get('/cart',(req,res)=>
+app.get('/cart',(req,responce)=>
 {
     const UserId = req.session.UserId;
 
     if(!UserId)
     {
-        res.send("User not loged in");
+        responce.send("User not loged in");
+        return;
     }
 
-    const user = Users.find(user => user.UserId === UserId);
-
-    res.send(user.cart);
-
+    //Get all products in the cart from the database
+    client.query('SELECT * FROM usercart WHERE UserId = $1', [UserId], (err, res) =>
+    {
+        if (err) throw err;
+        console.log(res);
+        if(res.rows.length > 0)
+        {
+            responce.send(res.rows);
+        }
+        else
+        {
+            responce.send("Cart is empty");
+        }
+    });
 
 
 });
@@ -148,23 +237,106 @@ app.post('/addtocart',(req,res)=>
     if(!UserId)
     {
         res.send("User not loged in");
-    }
-
-    const user = Users.find(user => user.UserId === UserId);
-    const product = Products.find(product => product.productId === req.body.productId);
-
-    if(product == null)
-    {
-        res.status(404).send("Product not found");
         return;
     }
 
-    user.cart.addProduct(product);
+    //Check if the product is already in the cart in database
+    client.query('SELECT * FROM usercart WHERE UserId = $1 AND productId = $2', [UserId, req.body.productId], (err, res) =>
+    {
+        if (err) throw err;
+        console.log(res);
+        
+        if(res.rows.length > 0)
+        {
+            client.query('UPDATE usercart SET quantity = $1 WHERE UserId = $2 AND productId = $3', [req.body.quantity, UserId, req.body.productId], (err, res) =>
+            {
+                if (err) throw err;
+                console.log(res);
+            });
+        }
+        else
+        {
+            client.query('INSERT INTO usercart (UserId, productId, quantity) VALUES ($1, $2, $3)', [UserId, req.body.productId, req.body.quantity], (err, res) =>
+            {
+                if (err) throw err;
+                console.log(res);
+            });
+        }
+        
+    });
 
     res.send("Product added to cart");
 
 
 });
+
+async function getCheckoutPrice(UserId,callback)
+{
+    try
+    {
+      
+        //Get product id and quantity from cart
+        const productsincart = await new Promise((resolve, reject) =>
+        {
+        
+            client.query('SELECT * from usercart WHERE UserId = $1', [UserId], (err, res) =>
+            {
+                if (err) throw err;
+                console.log(res);
+                if(res.rows.length > 0)
+                {
+                    resolve(res.rows);
+                }
+                else
+                {
+                    reject("Cart is empty");
+                }
+            });
+        });
+
+        var productQuantiymap = new Map();
+
+        //Get price of each product from the database
+
+        for(var i = 0; i < productsincart.length; i++)
+        {
+            const product = await new Promise((resolve, reject) =>
+            {
+                client.query('SELECT * from products WHERE productId = $1', [productsincart[i].productid], (err, res) =>
+                {
+                    if (err) throw err;
+                    if(res.rows.length > 0)
+                    {
+                        resolve(res.rows[0]);
+                    }
+                    else
+                    {
+                        reject("No products found");
+                    }
+                });
+
+            });
+
+            productQuantiymap.set(productsincart[i].productid, {price: product.price, quantity: productsincart[i].quantity});
+        }
+
+        var totalprice = 0;
+
+        productQuantiymap.forEach((value, key) =>
+        {
+            totalprice += value.price * value.quantity;
+        });
+        callback(totalprice);
+
+        
+
+    }
+    catch(err)
+    {
+        console.log(err);
+    }
+
+}
 
 app.post('/checkout',(req,res)=>
 {
@@ -173,22 +345,16 @@ app.post('/checkout',(req,res)=>
     if(!UserId)
     {
         res.send("User not loged in");
-    }
-    
-
-    const user = Users.find(user => user.UserId === UserId);
-
-    if(user.address == null)
-    {
-        res.status(400).send("Please add an address to checkout");
         return;
     }
 
-    user.cart.checkout();
+    getCheckoutPrice(UserId,(totalPrice)=>
+    {
+        console.log("Total price is " + totalPrice);
+        res.send("Total price is " + totalPrice);
+    });
 
-    const total = user.cart.products.reduce((total,product) => total + product.price,0);
 
-    res.send(`Checkout successfull, total amount to be paid is ${total}`);
 
 
 });
@@ -202,71 +368,80 @@ function isAdmin(req,res,next)
     if(!UserId)
     {
         res.send("User not loged in");
-    }
-
-    const user = Users.find(user => user.UserId === UserId);
-
-    if(user == null)
-    {
-        res.status(404).send("User not found");
         return;
     }
 
-    if(user.isAdmin == true) next();
-    else
+    //Get is admin from user table in the database
+    client.query('SELECT isAdmin FROM users WHERE UserId = $1', [UserId], (err, res) =>
     {
-        res.status(401).send('You are Not an Admin');
-    }
+        if (err) throw err;
+        console.log(res);
+        if(res.rows.length > 0)
+        {
+            if(res.rows[0].isadmin == true)
+            {
+                next();
+            }
+            else
+            {
+                res.status(401).send('You are Not an Admin');
+            }
+        }
+    });
+
 }
 
-app.post('/product',isAdmin,(req,res)=>
+app.post('/product',isAdmin,(req,responce)=>
 {
     const name = req.body.name;
     const price = req.body.price;
     const description = req.body.description;
     const productId = uuidv4();
-    const product = new Product(name,price,description,productId);
 
-    Products.push(product);
+    // Create a row in the database for the product
 
-    res.send(`Product created with product data: name=${name}, price=${price}, description=${description} , productId=${productId}`);
+    client.query('INSERT INTO products (name, price, description, productId) VALUES ($1, $2, $3, $4)', [name, price, description, productId], (err, res) =>
+    {
+        if (err) throw err;
+        else
+        {
+            responce.send(`Product added with product data: name=${name}, price=${price}, description=${description} , productId=${productId}`);
+        }
+    });
+
 
 });
 
 app.put('/product',isAdmin,(req,res)=>
 {
-    var product = Products.find(product => product.productId === req.body.productId);
-    if(product == null)
+    //Update the product in the database
+
+    client.query('UPDATE products SET name = $1, price = $2, description = $3 WHERE productId = $4', [req.body.name, req.body.price, req.body.description, req.body.productId], (err, res) =>
     {
-        res.status(404).send("Product not found");
-        return;
-    }
-    else 
-    {
-        product.name = req.body.name;
-        product.price = req.body.price;
-        product.description = req.body.description;
-        res.send("Product updated");
-    }
+        if (err) throw err;
+        console.log(res);
+        if(res.rows.length > 0)
+        {
+            res.send(`Product updated with product data: name=${req.body.name}, price=${req.body.price}, description=${req.body.description} , productId=${req.body.productId}`);
+        }
+    });
     
 
 });
 
 app.delete('/product',isAdmin,(req,res)=>
 {
-    var product = Products.find(product => product.productId === req.body.productId);
-    if(product == null)
-    {
-        res.status(404).send("Product not found");
-        return;
-    }
-    else 
-    {
-        Products.splice(Products.indexOf(product),1);
-        res.send("Product deleted");
-    }
-    
+    //Delete the product from the database
 
+    client.query('DELETE FROM products WHERE productId = $1', [req.body.productId], (err, res) =>
+    {
+        if (err) throw err;
+        console.log(res);
+        if(res.rows.length > 0)
+        {
+            res.send(`Product deleted with product data: productId=${req.body.productId}`);
+        }
+    });
 
 });
 
