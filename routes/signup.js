@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const { v4: uuidv4 } = require('uuid');
+const User = require('../models/User');
 const bcrypt = require('bcrypt');
-const {client} = require('../database');
+const {client} = require('../config/sequelize');
+
 
 // salt rounds for bcrypt us used to generate a salt for hashing the password
 // which is then stored in the database instead of the plain text password
@@ -11,33 +12,54 @@ const saltRounds = 10;
 // generate a salt for hashing the password
 const salt = bcrypt.genSaltSync(saltRounds);
 
-router.post('/',(req,responce)=>
-{
-    const name = req.body.name.slice(0, 50);
-    const email = req.body.email.slice(0, 50);
-    const isAdmin = req.body.isAdmin;
+async function createUser(name, email, hashedPassword, isAdmin , callback) {
 
-
-    const hashedPassword = bcrypt.hashSync(req.body.password, salt);
-    const UserId = uuidv4();
-
-    console.log(hashedPassword.length);
-
-    client.query('INSERT INTO users (name, email, password, isAdmin, UserId) VALUES ($1, $2, $3, $4, $5)', [name, email, hashedPassword, isAdmin, UserId], (err, res) =>
+    try
     {
-        if (err) throw err;
-        console.log(res);
-        if(res.rowCount > 0)
+        const user = await User.findOne({where: {email: email}});
+        if(user)
         {
-            responce.send("User created successfully");
+            callback(null);
+            return;
         }
-        else
+
+        const newUser = await User.create({
+            name: name,
+            email: email,
+            password: hashedPassword,
+            isAdmin: isAdmin
+        });
+    
+        callback(newUser);
+    }
+    catch(err)
+    {
+        console.log(err);
+        callback(null);
+    }
+
+
+};
+
+router.post('/',(req,response)=>
+{
+    const name = req.body.name;
+    const email = req.body.email;
+    const isAdmin = req.body.isAdmin;
+    const hashedPassword = bcrypt.hashSync(req.body.password, salt);
+    
+    createUser(name, email, hashedPassword, isAdmin , (user) =>
+    {
+        if(user)
         {
-            responce.status(400).send("User creation failed email already exists");
+            response.status(200).send(user);
+        } else 
+        {
+
+            response.status(400).send('User already exists');
         }
     });
-
-
+    
 });
 
 module.exports = router;

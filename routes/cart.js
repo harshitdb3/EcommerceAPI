@@ -1,32 +1,36 @@
 const express = require('express');
 const router = express.Router();
-const {client} = require('../database');
+const {client} = require('../config/sequelize');
+const UserCart = require('../models/UserCart');
+const Product = require('../models/Product');
+const User = require('../models/User');
 
-
-router.get('/',(req,responce)=>
+router.get('/',(req,response)=>
 {
     const UserId = req.session.UserId;
 
     if(!UserId)
     {
-        responce.send("User not loged in");
+        response.send("User not loged in");
         return;
     }
 
-    //Get all products in the cart from the database
-    client.query('SELECT * FROM usercart WHERE UserId = $1', [UserId], (err, res) =>
-    {
-        if (err) throw err;
-        console.log(res);
-        if(res.rows.length > 0)
+    User.findByPk(UserId, {
+        include: [Product]
+        }).then(user =>
         {
-            responce.send(res.rows);
-        }
-        else
+            user.getProducts().then((products) =>  
+            {
+                response.send(products);
+            });
+
+        }).catch((err) =>
         {
-            responce.send("Cart is empty");
+            console.log(err);
         }
-    });
+        );
+
+
 
 
 });
@@ -37,72 +41,55 @@ async function getCheckoutPrice(UserId,callback)
     try
     {
       
-        //Get product id and quantity from cart
-        const productsincart = await new Promise((resolve, reject) =>
-        {
-        
-            client.query('SELECT * from usercart WHERE UserId = $1', [UserId], (err, res) =>
+        //Get product and quantity from cart
+        var totalPrice = 0;
+        var iproducts;
+        User.findByPk(UserId, {
+            include: [{
+              model: Product,
+              through: {
+                attributes: ['quantity']
+              }
+            }]
+          }).then(user => 
             {
-                if (err) throw err;
-                console.log(res);
-                if(res.rows.length > 0)
-                {
-                    resolve(res.rows);
-                }
-                else
-                {
-                    reject("Cart is empty");
-                }
-            });
-        });
-
-        var productQuantiymap = new Map();
-
-        //Get price of each product from the database
-
-        for(var i = 0; i < productsincart.length; i++)
-        {
-            const product = await new Promise((resolve, reject) =>
+            user.getProducts().then((products) =>
             {
-                client.query('SELECT * from products WHERE productId = $1', [productsincart[i].productid], (err, res) =>
+                iproducts = products;
+                products.forEach(product =>
                 {
-                    if (err) throw err;
-                    if(res.rows.length > 0)
-                    {
-                        resolve(res.rows[0]);
-                    }
-                    else
-                    {
-                        reject("No products found");
-                    }
-                });
+                    totalPrice += product.price * product.UserCart.quantity;
+                    console.log("Usercart quantity is " + product.UserCart.quantity);
+                }); 
+                console.log("products are " + products);
+           
+            }).then(() =>
+            {
+              
+              UserCart.destroy({
+                  where: {
+                      UserId: UserId
+                      }
+                  });
+  
+              }
+              ).then(() =>
+              {
+                  console.log("Deleted from cart");
+                  callback(iproducts,totalPrice);
+  
+              });
 
-            });
+ 
 
-            productQuantiymap.set(productsincart[i].productid, {price: product.price, quantity: productsincart[i].quantity});
-        }
-
-        //Delete all products from the cart
-
-        await client.query('DELETE FROM usercart WHERE UserId = $1', [UserId], (err, res) =>
-        {
-            if (err) throw err;
-        });
-
-        var totalprice = 0;
-
-        productQuantiymap.forEach((value, key) =>
-        {
-            totalprice += value.price * value.quantity;
-        });
-        callback(totalprice);
-
-        
+          });
+            
 
     }
     catch(err)
     {
         console.log(err);
+        callback(null,0);
     }
 
 }
@@ -117,11 +104,27 @@ router.post('/checkout',(req,res)=>
         return;
     }
 
-    getCheckoutPrice(UserId,(totalPrice)=>
+    //Check if the User has the address updated
+
+    User.findByPk(UserId).then((user) =>
     {
-        console.log("Total price is " + totalPrice);
-        res.send("Total price is " + totalPrice);
+        if(!user.address)
+        {
+            res.send("Please update your address");
+            return;
+        }
+        else
+        {
+            getCheckoutPrice(UserId,(products,price)=>
+            {
+                console.log("Total price is " + price);
+                res.send(products + " Total price is " + price);
+            });
+        }
     });
+
+
+   
 
 });
 
@@ -136,28 +139,27 @@ router.post('/add',(req,res)=>
     }
 
     //Check if the product is already in the cart in database
-    client.query('SELECT * FROM usercart WHERE UserId = $1 AND productId = $2', [UserId, req.body.productId], (err, res) =>
+    UserCart.findOne({where: {UserId: UserId, ProductId: req.body.ProductId}}).then((usercart) =>
     {
-        if (err) throw err;
-        console.log(res);
-        
-        if(res.rows.length > 0)
+        if(usercart)
         {
-            client.query('UPDATE usercart SET quantity = $1 WHERE UserId = $2 AND productId = $3', [req.body.quantity, UserId, req.body.productId], (err, res) =>
-            {
-                if (err) throw err;
-                console.log(res);
-            });
+            //If the product is already in the cart, then update the quantity
+            usercart.quantity = req.body.quantity;
+            usercart.save();
+            console.log("Product quantity updated");
         }
         else
         {
-            client.query('INSERT INTO usercart (UserId, productId, quantity) VALUES ($1, $2, $3)', [UserId, req.body.productId, req.body.quantity], (err, res) =>
+            //If the product is not in the cart, then add it to the cart
+            UserCart.create({
+                UserId: UserId,
+                ProductId: req.body.ProductId,
+                quantity: req.body.quantity
+            }).then(() =>
             {
-                if (err) throw err;
-                console.log(res);
+                console.log("Product added to cart");
             });
         }
-        
     });
 
     res.send("Product added to cart");

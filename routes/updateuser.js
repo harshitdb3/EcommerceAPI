@@ -1,6 +1,32 @@
 const express = require('express');
 const router = express.Router();
-const {client} = require('../database');
+const {client} = require('../config/sequelize');
+const User = require('../models/User');
+
+async function updateAddress(UserId,newAddress,callback) {
+
+    try
+    {
+        const user = await User.findOne({where: {id: UserId}});
+        if(!user)
+        {
+            callback(null);
+            return;
+        }
+        else
+        {
+            user.address = newAddress;
+            user.save();
+            console.log('address updated');
+            callback(user);
+        }
+
+    }
+    catch(err)
+    {
+        console.log(err);
+    }
+}
 
 router.post('/addAddress',(req,response)=>
 {
@@ -11,18 +37,20 @@ router.post('/addAddress',(req,response)=>
         response.send("User not loged in");
     }
 
-    client.query('UPDATE users SET address = $1 WHERE UserId = $2', [req.body.address, UserId], (err, res) =>
+    updateAddress(UserId,req.body.address, (user) =>
     {
-        if (err) throw err;
-        console.log(res);
-        if(res.rowCount > 0)
+        if(user)
         {
-            response.send("Address added successfully");
+            console.log('address updated');
+            response.status(200).send('Address update to ' + user.address);
+
+        } 
+        else 
+        {        
+            response.status(400).send('Cannot update address');
         }
     });
-
     
-
 });
 
 module.exports = router;

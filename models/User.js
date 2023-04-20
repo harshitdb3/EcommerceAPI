@@ -1,27 +1,39 @@
-const Cart = require('./Cart');
+const {DataTypes } = require('sequelize');
+const sequelize = require('../config/sequelize');
 
-class User{
 
+const User = sequelize.define('User',{
+  id: {
+    type: DataTypes.UUID,
+    defaultValue:DataTypes.UUIDV4 ,
+    primaryKey: true
+  },
 
-    constructor(name,UserId,email,hashedPassword,isAdmin)
-    {
-        this.name = name;
-        this.email = email;
-        this.hashedPassword = hashedPassword;
-        this.UserId = UserId;
-        this.isAdmin = isAdmin;
-        this.cart = new Cart();
-
-        
-
-    }
-
-    addAddress(address)
-    {
-        this.address = address;
-    }
-
-    
-}
+  name: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  email: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    unique: true
+  },
+  password: {
+    type: DataTypes.STRING,
+    allowNull: false
+  },
+  isAdmin: {
+    type: DataTypes.BOOLEAN,
+    defaultValue: false
+  },
+  address: {
+    type: DataTypes.STRING,
+    allowNull: true
+  },
+});
 
 module.exports = User;
+
+
+
+

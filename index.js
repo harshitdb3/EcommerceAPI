@@ -1,6 +1,6 @@
 const express =  require('express');
 const session = require('express-session')
-const {connect} = require('./database');
+const sequelize = require('./config/sequelize');
 const app = express();
 
 app.use(session({
@@ -12,7 +12,10 @@ app.use(session({
 
 app.use(express.json());
 
-connect();
+sequelize.sync({}).then(() =>
+{
+console.log('Database & tables created!'); 
+});
 
 app.get('/',(req,res) => 
 {

@@ -1,24 +1,22 @@
 const express = require('express');
 const router = express.Router();
 const { v4: uuidv4 } = require('uuid');
-const {client} = require('../database');
+const {client} = require('../config/sequelize');
+const User = require('../models/User');
+const Product = require('../models/Product');
 
 
 router.get('/',(req,resp)=>
 {
     //Get all products from the database
-    client.query('SELECT * FROM products', (err, res) =>
+   
+    Product.findAll().then((products) =>
     {
-        if (err) throw err;
-        console.log(res);
-        if(res.rows.length > 0)
-        {
-            resp.send(res.rows);
-        }
-        else
-        {
-            resp.send("No products available");
-        }
+        resp.send(products);
+
+    }).catch((err) =>
+    {
+        console.log(err);
     });
 
 });
@@ -37,43 +35,50 @@ function isAdmin(req, res, next)
     }
 
     //Get is admin from user table in the database
-    client.query('SELECT isAdmin FROM users WHERE UserId = $1', [UserId], (err, res) =>
+    User.findByPk(UserId).then((user) =>
     {
-        if (err) throw err;
-        console.log(res);
-        if(res.rows.length > 0)
+        if(user.isAdmin)
         {
-            if(res.rows[0].isadmin == true)
-            {
-                next();
-            }
-            else
-            {
-                res.status(401).send('You are Not an Admin');
-            }
+            next();
         }
-    });
+        else
+        {
+            res.send("User is not an admin");
+        }
+    }).catch((err) =>
+    {
+        console.log(err);
+    }
+    );
+  
     
 }
 
 
-router.post('/',isAdmin,(req,responce)=>
+router.post('/',isAdmin,(req,response)=>
 {
     const name = req.body.name;
     const price = req.body.price;
     const description = req.body.description;
-    const productId = uuidv4();
+    const quantity = req.body.quantity;
 
     // Create a row in the database for the product
 
-    client.query('INSERT INTO products (name, price, description, productId) VALUES ($1, $2, $3, $4)', [name, price, description, productId], (err, res) =>
+    Product.create({
+        name: name,
+        price: price,
+        description: description,
+        quantity: quantity
+    }).then((product) =>
     {
-        if (err) throw err;
-        else
-        {
-            responce.send(`Product added with product data: name=${name}, price=${price}, description=${description} , productId=${productId}`);
-        }
-    });
+        response.status(200).send(product);
+
+    }).catch((err) =>
+    {
+        response.status(400).send("Product not created");
+        console.log(err);
+    }
+    );
 
 
 });
@@ -83,15 +88,26 @@ router.put('/',isAdmin,(req,res)=>
 {
     //Update the product in the database
 
-    client.query('UPDATE products SET name = $1, price = $2, description = $3 WHERE productId = $4', [req.body.name, req.body.price, req.body.description, req.body.productId], (err, res) =>
+    Product.findByPk(req.body.productId).then((product) =>
     {
-        if (err) throw err;
-        console.log(res);
-        if(res.rows.length > 0)
+        if(product)
         {
-            res.send(`Product updated with product data: name=${req.body.name}, price=${req.body.price}, description=${req.body.description} , productId=${req.body.productId}`);
+            product.name = req.body.name;
+            product.price = req.body.price;
+            product.description = req.body.description;
+            product.save();
+            res.status(200).send(product);
         }
-    });
+        else
+        {
+            res.status(400).send("Product not found");
+        }
+    }
+    ).catch((err) =>
+    {
+        console.log(err);
+    }   
+    );
     
 
 });
@@ -100,15 +116,23 @@ router.delete('/',isAdmin,(req,res)=>
 {
     //Delete the product from the database
 
-    client.query('DELETE FROM products WHERE productId = $1', [req.body.productId], (err, res) =>
+    Product.findByPk(req.body.productId).then((product) =>
     {
-        if (err) throw err;
-        console.log(res);
-        if(res.rows.length > 0)
+        if(product)
         {
-            res.send(`Product deleted with product data: productId=${req.body.productId}`);
+            product.destroy();
+            res.status(200).send("Product deleted");
         }
-    });
+        else
+        {
+            res.status(400).send("Product not found");
+        }
+    }
+    ).catch((err) =>
+    {
+        console.log(err);
+    }
+    );
 
 });
 
